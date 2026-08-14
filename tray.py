@@ -1,0 +1,3 @@
+QSystemTrayIcon
+close()
+hide()
