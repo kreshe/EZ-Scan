@@ -3,6 +3,8 @@ from config import load, save
 from trainer import Trainer
 from PySide6.QtGui import QKeySequence
 from guide import GuideWindow
+from version import VERSION
+from update_window import UpdateWindow
 class Settings(QDialog):
 
     def __init__(self):
@@ -97,7 +99,52 @@ class Settings(QDialog):
         self.setLayout(
             layout
         )
+    def check_updates(self):
 
+        dialog = UpdateWindow(
+            VERSION,
+            self
+        )
+
+        dialog.exec()
+    def check_updates_on_startup(self):
+
+        try:
+
+            if not should_check_updates():
+
+                return
+
+            from updater import get_update_info
+
+            info = get_update_info(
+                VERSION
+            )
+
+            if not info:
+
+                return
+
+            if not info.get(
+                "update_available",
+                False
+            ):
+
+                return
+
+            dialog = UpdateWindow(
+                VERSION,
+                self
+            )
+
+            dialog.exec()
+
+        except Exception as e:
+
+            print(
+                "Ошибка автоматической проверки обновлений:",
+                e
+            )
     def open_guide(self):
 
         dialog = GuideWindow(
@@ -188,6 +235,18 @@ class Settings(QDialog):
             guide_btn
         )
 
+        update_btn = QPushButton(
+            "🔄 Проверить обновления"
+        )
+
+        update_btn.clicked.connect(
+            self.check_updates
+        )
+
+        layout.addRow(
+            update_btn
+        )
+        
         w.setLayout(
             layout
         )

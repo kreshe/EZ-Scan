@@ -1,53 +1,32 @@
 import importlib
 import shutil
 import subprocess
-import sys
+import os
 
-
-# ============================================================
-# PYTHON MODULES
-# ============================================================
 
 PYTHON_MODULES = {
-
     "PySide6": "PySide6",
     "evdev": "evdev",
     "pyperclip": "pyperclip",
-
 }
 
 
-# ============================================================
-# APT PACKAGES
-# ============================================================
-
 APT_PACKAGES = [
-
     "xdotool",
     "xclip",
-
-    "libxcb-cursor0",
-    "libxcb-xinerama0",
-    "libxcb-icccm4",
-    "libxcb-image0",
-    "libxcb-keysyms1",
-    "libxcb-randr0",
-    "libxcb-render-util0",
-    "libxcb-shape0",
-    "libxcb-xfixes0",
-
+    "policykit-1",
 ]
 
 
 # ============================================================
-# CHECK PYTHON
+# PYTHON
 # ============================================================
 
 def check_python():
 
     missing = []
 
-    for module, pip_name in PYTHON_MODULES.items():
+    for module, package in PYTHON_MODULES.items():
 
         try:
 
@@ -58,43 +37,31 @@ def check_python():
         except ImportError:
 
             missing.append(
-                pip_name
+                package
             )
 
     return missing
 
 
 # ============================================================
-# CHECK APT
+# APT
 # ============================================================
 
 def check_apt():
 
     missing = []
 
-    # Проверяем наличие dpkg
-
-    if shutil.which("dpkg") is None:
-
-        return APT_PACKAGES.copy()
-
-
     for package in APT_PACKAGES:
 
         result = subprocess.run(
-
             [
                 "dpkg",
                 "-s",
                 package
             ],
-
             stdout=subprocess.DEVNULL,
-
             stderr=subprocess.DEVNULL
-
         )
-
 
         if result.returncode != 0:
 
@@ -102,97 +69,67 @@ def check_apt():
                 package
             )
 
-
     return missing
 
 
 # ============================================================
-# INSTALL PYTHON
+# PKEXEC
 # ============================================================
 
-def install_python(packages):
+def has_pkexec():
 
-    if not packages:
-
-        return
-
-
-    print()
-    print("Установка Python-зависимостей...")
-    print()
-
-
-    command = [
-
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-
-        *packages
-
-    ]
-
-
-    subprocess.check_call(
-        command
-    )
+    return shutil.which(
+        "pkexec"
+    ) is not None
 
 
 # ============================================================
-# INSTALL APT
+# INSTALL SYSTEM
 # ============================================================
 
 def install_apt(packages):
 
     if not packages:
 
-        return
+        return True
 
-
-    print()
-    print("Установка системных зависимостей...")
-    print()
-
-
-    # Проверяем pkexec
-
-    if shutil.which("pkexec") is None:
+    if not has_pkexec():
 
         raise RuntimeError(
-            "Не найден pkexec. "
-            "Установите policykit-1."
+            "Не найден pkexec."
         )
 
-
-    # Обновляем список пакетов
-
-    subprocess.check_call(
-
+    result = subprocess.run(
         [
             "pkexec",
-            "apt",
+            "apt-get",
             "update"
         ]
-
     )
 
+    if result.returncode != 0:
 
-    # Устанавливаем ТОЛЬКО отсутствующие
+        raise RuntimeError(
+            "Не удалось выполнить apt-get update."
+        )
 
-    subprocess.check_call(
-
+    result = subprocess.run(
         [
             "pkexec",
-            "apt",
+            "apt-get",
             "install",
             "-y",
-
             *packages
-
         ]
-
     )
+
+    if result.returncode != 0:
+
+        raise RuntimeError(
+            "Не удалось установить системные зависимости."
+        )
+
+    return True
 
 
 # ============================================================
@@ -201,18 +138,14 @@ def install_apt(packages):
 
 def check_dependencies():
 
-    missing_python = check_python()
-
-    missing_apt = check_apt()
-
     return (
-        missing_python,
-        missing_apt
+        check_python(),
+        check_apt()
     )
 
 
 # ============================================================
-# INSTALL ALL
+# INSTALL ALL SYSTEM
 # ============================================================
 
 def install_dependencies(
@@ -227,61 +160,102 @@ def install_dependencies(
         )
 
 
-    if missing_python:
+# ============================================================
+# INPUT GROUP
+# ============================================================
 
-        install_python(
-            missing_python
+def in_input_group():
+
+    try:
+
+        result = subprocess.run(
+            [
+                "id",
+                "-nG"
+            ],
+            capture_output=True,
+            text=True
         )
 
+        return (
+            "input"
+            in result.stdout.split()
+        )
+
+    except Exception:
+
+        return False
+
 
 # ============================================================
-# PRINT RESULT
+# ADD USER TO INPUT
 # ============================================================
 
-def print_dependencies(
-    missing_python,
-    missing_apt
-):
+def add_to_input_group():
 
-    print()
-    print("=" * 50)
-    print("ПРОВЕРКА ЗАВИСИМОСТЕЙ")
-    print("=" * 50)
+    if in_input_group():
 
-
-    if missing_python:
-
-        print()
-        print("❌ Python:")
-
-        for package in missing_python:
-
-            print(
-                f"   - {package}"
+        return {
+            "success": True,
+            "restart_required": False,
+            "message": (
+                "Пользователь уже состоит "
+                "в группе input."
             )
+        }
 
-    else:
+    username = (
+        os.environ.get("USER")
+        or
+        os.environ.get("USERNAME")
+    )
 
-        print()
-        print("✅ Python-зависимости установлены")
+    if not username:
 
-
-    if missing_apt:
-
-        print()
-        print("❌ Системные:")
-
-        for package in missing_apt:
-
-            print(
-                f"   - {package}"
+        return {
+            "success": False,
+            "restart_required": False,
+            "message": (
+                "Не удалось определить пользователя."
             )
+        }
 
-    else:
+    if not has_pkexec():
 
-        print()
-        print("✅ Системные зависимости установлены")
+        return {
+            "success": False,
+            "restart_required": False,
+            "message": (
+                "Не найден pkexec."
+            )
+        }
 
+    result = subprocess.run(
+        [
+            "pkexec",
+            "usermod",
+            "-aG",
+            "input",
+            username
+        ]
+    )
 
-    print()
-    print("=" * 50)
+    if result.returncode != 0:
+
+        return {
+            "success": False,
+            "restart_required": False,
+            "message": (
+                "Не удалось добавить пользователя "
+                "в группу input."
+            )
+        }
+
+    return {
+        "success": True,
+        "restart_required": True,
+        "message": (
+            "Пользователь добавлен "
+            "в группу input."
+        )
+    }

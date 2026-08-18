@@ -1,93 +1,48 @@
 import sys
 import time
-import json
-import os
-from profile_window import ProfileWindow
-from dependency_installer import (
-    check_dependencies,
-    install_dependencies,
-    print_dependencies
+
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QWidget,
+    QPushButton,
+    QProgressBar,
+    QVBoxLayout,
+    QHBoxLayout
 )
+from updater import get_update_info
+from update_window import UpdateWindow
+from PySide6.QtCore import (
+    Qt,
+    Signal,
+    QThread,
+    QTimer
+)
+
+from PySide6.QtGui import (
+    QShortcut,
+    QKeySequence
+)
+
+from profile_window import ProfileWindow
 from welcome import WelcomeWindow
-
-missing_python, missing_apt = check_dependencies()
-
-
-if missing_python or missing_apt:
-
-    print_dependencies(
-        missing_python,
-        missing_apt
-    )
-
-
-    answer = input(
-        "\nУстановить отсутствующие зависимости? [Y/n]: "
-    )
-
-
-    if answer.lower() in ("", "y", "yes", "д", "да"):
-
-        try:
-
-            install_dependencies(
-                missing_python,
-                missing_apt
-            )
-
-            print()
-            print("✅ Все зависимости установлены.")
-            print("🔄 Перезапуск программы...")
-
-
-            os.execv(
-                sys.executable,
-                [
-                    sys.executable,
-                    *sys.argv
-                ]
-            )
-
-
-        except Exception as e:
-
-            print()
-            print("❌ Ошибка установки:")
-            print(e)
-
-            input(
-                "\nНажмите Enter для выхода..."
-            )
-
-            sys.exit(1)
-
-
-    else:
-
-        print()
-        print("❌ Без необходимых зависимостей программа не может запуститься.")
-
-        input(
-            "\nНажмите Enter для выхода..."
-        )
-
-        sys.exit(1)
-
-
-from PySide6.QtWidgets import *
-from PySide6.QtCore import *
+from setup_window import SetupWindow
 
 from buffer import QRBuffer
 from scanner import read_scanner
 from sender import execute_batch
 from trainer import Trainer
-from PySide6.QtGui import QShortcut, QKeySequence
+
 from version import VERSION
-from config import load, save, set
+from config import (
+    load,
+    save,
+    set,
+    should_check_updates
+)
 from settings import Settings
 from queue_window import QueueWindow
 from status_widget import StatusWidget
-
 def get_active_profile():
 
     cfg = load()
@@ -112,15 +67,9 @@ def get_active_profile():
 profile = get_active_profile()
 
 cfg = load()
-
-
 BUFFER_SIZE = profile["buffer_size"]
 SEND_BATCH_SIZE = profile["batch_size"]
 AUTO_SEND = profile["auto_send"]
-
-buffer = QRBuffer(
-    BUFFER_SIZE
-)
 
 buffer = QRBuffer(BUFFER_SIZE)
 
@@ -296,7 +245,7 @@ class Window(QWidget):
 
 
         self.setWindowTitle(
-            f"QR Buffer v{VERSION}"
+            f"EZ Scan v{VERSION}"
         )
 
         self.sending = False
@@ -451,7 +400,6 @@ class Window(QWidget):
         # ==========================================
         # НАСТРОЙКИ / ПРОФИЛЬ
         # ==========================================
-
         settings_profile = QHBoxLayout()
 
         settings_profile.addWidget(
@@ -527,6 +475,66 @@ class Window(QWidget):
         self.raise_()
         self.setFocus()
 
+
+    def check_updates_silent(self):
+
+        try:
+
+            print(
+                "🔄 Проверка обновлений..."
+            )
+
+            info = get_update_info(
+                VERSION
+            )
+
+            print(
+                "Текущая версия:",
+                VERSION
+            )
+
+            print(
+                "GitHub:",
+                info
+            )
+
+            if not info:
+
+                print(
+                    "⚠ GitHub не вернул информацию"
+                )
+
+                return
+
+            if not info.get(
+                "update_available",
+                False
+            ):
+
+                print(
+                    "✅ Обновлений нет"
+                )
+
+                return
+
+            print(
+                "🚀 Найдено обновление:",
+                info.get("version")
+            )
+
+            dialog = UpdateWindow(
+                VERSION,
+                self
+            )
+
+            dialog.exec()
+
+        except Exception as e:
+
+            print(
+                "❌ Ошибка проверки обновлений:",
+                repr(e)
+            )
     def open_settings(self):
 
         dialog = Settings()
@@ -853,22 +861,37 @@ class Window(QWidget):
 
         global AUTO_SEND
 
-
         AUTO_SEND = self.auto.isChecked()
-        set(
-            "auto_send",
+
+        cfg = load()
+
+        profile_name = cfg.get(
+            "active_profile",
+            "По умолчанию"
+        )
+
+        profile = cfg.setdefault(
+            "profiles",
+            {}
+        ).setdefault(
+            profile_name,
+            {}
+        )
+
+        profile["auto_send"] = AUTO_SEND
+
+        save(
+            cfg
+        )
+
+        self.status.set_auto(
             AUTO_SEND
         )
-        self.status.set_auto(AUTO_SEND)
 
         if AUTO_SEND:
 
             self.auto.setText(
                 "⚡ Авто: ВКЛ"
-            )
-
-            self.status.set_auto(
-                True
             )
 
             self.status.set_stage(
@@ -881,43 +904,110 @@ class Window(QWidget):
                 "⚡ Авто: ВЫКЛ"
             )
 
-            self.status.set_auto(
-                False
-            )
-
             self.status.set_stage(
                 "Ручная отправка"
             )
 
 
-app = QApplication(sys.argv)
+def run():
 
-window = Window()
+    cfg = load()
 
-window.show()
+    # ==================================================
+    # ПЕРВЫЙ ЗАПУСК
+    # ==================================================
 
-cfg = load()
+    if cfg.get(
+        "first_run",
+        True
+    ):
 
-if cfg.get(
-    "show_welcome",
-    True
-):
+        setup = SetupWindow()
 
-    welcome = WelcomeWindow(
-        window
-    )
+        result = setup.exec()
 
-    result = welcome.exec()
+        if result != QDialog.Accepted:
 
-    if not welcome.show_again.isChecked():
+            return None
 
-        cfg["show_welcome"] = False
+        cfg = load()
+
+        cfg["first_run"] = False
 
         save(
             cfg
         )
 
-sys.exit(
-    app.exec()
-)
+    # ==================================================
+    # АКТИВНЫЙ ПРОФИЛЬ
+    # ==================================================
 
+    profile = get_active_profile()
+
+    global BUFFER_SIZE
+    global SEND_BATCH_SIZE
+    global AUTO_SEND
+    global buffer
+
+    BUFFER_SIZE = profile.get(
+        "buffer_size",
+        24
+    )
+
+    SEND_BATCH_SIZE = profile.get(
+        "batch_size",
+        12
+    )
+
+    AUTO_SEND = profile.get(
+        "auto_send",
+        True
+    )
+
+    buffer = QRBuffer(
+        BUFFER_SIZE
+    )
+
+    # ==================================================
+    # ГЛАВНОЕ ОКНО
+    # ==================================================
+
+    window = Window()
+
+    window.show()
+
+    # ==================================================
+    # ПРОВЕРКА ОБНОВЛЕНИЙ
+    # ==================================================
+
+    QTimer.singleShot(
+        100,
+        window.check_updates_silent
+    )
+
+    # ==================================================
+    # WELCOME
+    # ==================================================
+
+    cfg = load()
+
+    if cfg.get(
+        "show_welcome",
+        True
+    ):
+
+        welcome = WelcomeWindow(
+            window
+        )
+
+        welcome.exec()
+
+        if not welcome.show_again.isChecked():
+
+            cfg["show_welcome"] = False
+
+            save(
+                cfg
+            )
+
+    return window

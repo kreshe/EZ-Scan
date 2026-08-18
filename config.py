@@ -79,6 +79,12 @@ DEFAULT_PROFILE = {
 # ============================================================
 
 DEFAULT_CONFIG = {
+    "update_check": {
+    "enabled": True,
+    "interval_hours": 24,
+    "last_check": 0
+},
+    "first_run": True,
     "show_welcome": True,
     "active_profile": "По умолчанию",
     
@@ -499,3 +505,52 @@ def get_active_profile_name():
         "active_profile",
         "По умолчанию"
     )
+    
+from time import time
+
+def should_check_updates():
+
+    cfg = load()
+
+    settings = cfg.setdefault(
+        "update_check",
+        {
+            "enabled": True,
+            "interval_hours": 24,
+            "last_check": 0
+        }
+    )
+
+    if not settings.get(
+        "enabled",
+        True
+    ):
+
+        return False
+
+    now = time()
+
+    last = settings.get(
+        "last_check",
+        0
+    )
+
+    interval = (
+        settings.get(
+            "interval_hours",
+            24
+        )
+        * 3600
+    )
+
+    if now - last < interval:
+
+        return False
+
+    settings["last_check"] = now
+
+    save(
+        cfg
+    )
+
+    return True
