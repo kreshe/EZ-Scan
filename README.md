@@ -492,3 +492,4 @@ dist/EZ SCAN-v2.3-x86_64.AppImage
 # 👤 Автор
 
 KrenDge
+

@@ -108,15 +108,18 @@ class ClickProgressBar(QProgressBar):
 class ScannerThread(QThread):
 
     scanned = Signal(str)
+
     error = Signal(str)
 
+    status = Signal(str)
 
     def run(self):
 
         try:
 
             read_scanner(
-                self.new_code
+                self.new_code,
+                self.scanner_status
             )
 
         except Exception as e:
@@ -125,21 +128,66 @@ class ScannerThread(QThread):
                 str(e)
             )
 
-
-
-    def new_code(self, code):
+    def new_code(
+        self,
+        code
+    ):
 
         if not code:
+
             return
 
-
-        # защита от управляющих клавиш
         if len(code) < 3:
+
             return
 
+        self.scanned.emit(
+            code
+        )
 
-        self.scanned.emit(code)
+    def scanner_status(
+        self,
+        state
+    ):
 
+        # --------------------------------------------
+        # ПОДКЛЮЧЁН
+        # --------------------------------------------
+
+        if state == "connected":
+
+            self.status.emit(
+                "🟢 Сканер подключён"
+            )
+
+        # --------------------------------------------
+        # ОТКЛЮЧЁН
+        # --------------------------------------------
+
+        elif state == "disconnected":
+
+            self.status.emit(
+                "🔴 Сканер отключён — "
+                "ожидание подключения..."
+            )
+
+        # --------------------------------------------
+        # ОШИБКА
+        # --------------------------------------------
+
+        elif (
+            isinstance(
+                state,
+                tuple
+            )
+            and
+            state[0] == "error"
+        ):
+
+            self.status.emit(
+                f"⚠ Ошибка сканера: "
+                f"{state[1]}"
+            )
 
 
 
@@ -468,14 +516,24 @@ class Window(QWidget):
         self.scanner.error.connect(
             self.show_error
         )
-
+        
+        self.scanner.status.connect(
+            self.scanner_status
+        )
 
         self.scanner.start()
         self.activateWindow()
         self.raise_()
         self.setFocus()
 
+    def scanner_status(
+        self,
+        message
+    ):
 
+        self.status.set_stage(
+            message
+        )
     def check_updates_silent(self):
 
         try:

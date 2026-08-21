@@ -1,10 +1,16 @@
+from pathlib import Path
+import webbrowser
+
+
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QProgressBar,
-    QMessageBox
+    QMessageBox,
+    QTextEdit
 )
 
 from PySide6.QtCore import (
@@ -14,14 +20,30 @@ from PySide6.QtCore import (
 
 from updater import (
     get_update_info,
-    download_update
+    download_update,
+    start_update,
+    start_rollback,
+    get_current_appimage
 )
 
 
-class UpdateThread(QThread):
+# ============================================================
+# GITHUB
+# ============================================================
+
+GITHUB_URL = "https://github.com/kreshe/EZ-Scan"
+
+
+# ============================================================
+# DOWNLOAD THREAD
+# ============================================================
+
+class DownloadThread(QThread):
 
     progress = Signal(int)
+
     finished = Signal(object)
+
     error = Signal(str)
 
     def __init__(
@@ -42,17 +64,9 @@ class UpdateThread(QThread):
                 self.progress.emit
             )
 
-            if path:
-
-                self.finished.emit(
-                    path
-                )
-
-            else:
-
-                self.error.emit(
-                    "Не удалось скачать обновление."
-                )
+            self.finished.emit(
+                path
+            )
 
         except Exception as e:
 
@@ -60,6 +74,10 @@ class UpdateThread(QThread):
                 str(e)
             )
 
+
+# ============================================================
+# UPDATE WINDOW
+# ============================================================
 
 class UpdateWindow(QDialog):
 
@@ -78,29 +96,33 @@ class UpdateWindow(QDialog):
         )
 
         self.info_data = None
-        self.update_thread = None
-        self.updated_file = None
+        self.thread = None
+        self.downloaded = None
 
         self.setWindowTitle(
             "🔄 Обновление EZ Scan"
         )
 
         self.resize(
-            520,
-            380
+            560,
+            450
         )
 
         self.setup_ui()
 
         self.check()
 
+    # ========================================================
+    # UI
+    # ========================================================
+
     def setup_ui(self):
 
-        self.title = QLabel(
-            "🔄 Проверка обновлений..."
+        title = QLabel(
+            "🔄 EZ Scan — обновления"
         )
 
-        self.title.setStyleSheet(
+        title.setStyleSheet(
             """
             QLabel {
                 font-size: 18px;
@@ -109,17 +131,29 @@ class UpdateWindow(QDialog):
             """
         )
 
+        # ----------------------------------------------------
+        # INFO
+        # ----------------------------------------------------
+
         self.info = QLabel()
 
         self.info.setWordWrap(
             True
         )
 
-        self.notes = QLabel()
+        # ----------------------------------------------------
+        # RELEASE NOTES
+        # ----------------------------------------------------
 
-        self.notes.setWordWrap(
+        self.notes = QTextEdit()
+
+        self.notes.setReadOnly(
             True
         )
+
+        # ----------------------------------------------------
+        # PROGRESS
+        # ----------------------------------------------------
 
         self.progress = QProgressBar()
 
@@ -127,30 +161,113 @@ class UpdateWindow(QDialog):
             0
         )
 
-        self.update_btn = QPushButton(
-            "⬇ Скачать обновление"
+        # ----------------------------------------------------
+        # UPDATE
+        # ----------------------------------------------------
+
+        self.update_button = QPushButton(
+            "⬇ Скачать и установить"
         )
 
-        self.update_btn.clicked.connect(
+        self.update_button.clicked.connect(
             self.download
         )
 
-        self.update_btn.setEnabled(
+        self.update_button.setEnabled(
             False
         )
 
-        self.close_btn = QPushButton(
+        # ----------------------------------------------------
+        # ROLLBACK
+        # ----------------------------------------------------
+
+        self.rollback_button = QPushButton(
+            "↩ Откатить"
+        )
+
+        self.rollback_button.clicked.connect(
+            self.rollback
+        )
+
+        self.rollback_button.setVisible(
+            False
+        )
+
+        current = get_current_appimage()
+
+        if current:
+
+            backup = Path(
+                str(current)
+                + ".bak"
+            )
+
+            if backup.exists():
+
+                self.rollback_button.setVisible(
+                    True
+                )
+
+        # ----------------------------------------------------
+        # GITHUB
+        # ----------------------------------------------------
+
+        self.github_button = QPushButton(
+            "🌐 GitHub"
+        )
+
+        self.github_button.setToolTip(
+            "Открыть страницу проекта на GitHub"
+        )
+
+        self.github_button.clicked.connect(
+            self.open_github
+        )
+
+        # ----------------------------------------------------
+        # CLOSE
+        # ----------------------------------------------------
+
+        close_button = QPushButton(
             "Закрыть"
         )
 
-        self.close_btn.clicked.connect(
+        close_button.clicked.connect(
             self.reject
         )
+
+        # ----------------------------------------------------
+        # BUTTONS
+        # ----------------------------------------------------
+
+        buttons = QHBoxLayout()
+
+        buttons.addWidget(
+            self.update_button
+        )
+
+        buttons.addWidget(
+            self.rollback_button
+        )
+
+        buttons.addStretch()
+
+        buttons.addWidget(
+            self.github_button
+        )
+
+        buttons.addWidget(
+            close_button
+        )
+
+        # ----------------------------------------------------
+        # MAIN LAYOUT
+        # ----------------------------------------------------
 
         layout = QVBoxLayout()
 
         layout.addWidget(
-            self.title
+            title
         )
 
         layout.addWidget(
@@ -165,143 +282,239 @@ class UpdateWindow(QDialog):
             self.progress
         )
 
-        layout.addWidget(
-            self.update_btn
-        )
-
-        layout.addWidget(
-            self.close_btn
+        layout.addLayout(
+            buttons
         )
 
         self.setLayout(
             layout
         )
 
+    # ========================================================
+    # GITHUB
+    # ========================================================
+
+    def open_github(self):
+
+        try:
+
+            webbrowser.open(
+                GITHUB_URL
+            )
+
+        except Exception as e:
+
+            QMessageBox.warning(
+                self,
+                "GitHub",
+                f"Не удалось открыть браузер:\n\n{e}"
+            )
+
+    # ========================================================
+    # CHECK
+    # ========================================================
+
     def check(self):
 
-        self.info_data = (
-            get_update_info(
-                self.current_version
-            )
+        self.info.setText(
+            "🔎 Проверка GitHub..."
+        )
+
+        self.info_data = get_update_info(
+            self.current_version
         )
 
         if not self.info_data:
 
-            self.title.setText(
-                "⚠️ Не удалось проверить обновления"
+            self.info.setText(
+                "⚠️ Не удалось проверить GitHub."
             )
 
-            self.info.setText(
-                "Проверьте подключение к интернету."
-            )
+            self.notes.clear()
 
             return
 
-        if not self.info_data.get(
-            "update_available"
-        ):
+        error = self.info_data.get(
+            "error"
+        )
 
-            self.title.setText(
-                "✅ Установлена последняя версия"
-            )
+        if error:
 
             self.info.setText(
+                f"⚠️ {error}"
+            )
+
+            self.notes.clear()
+
+            return
+
+        # ----------------------------------------------------
+        # NO UPDATE
+        # ----------------------------------------------------
+
+        if not self.info_data.get(
+            "update_available",
+            False
+        ):
+
+            self.info.setText(
+                f"✅ Установлена последняя версия.\n\n"
                 f"Текущая версия: "
                 f"{self.current_version}"
             )
 
+            self.notes.setPlainText(
+                "Новых версий сейчас нет."
+            )
+
             return
 
-        version = self.info_data[
-            "version"
-        ]
+        # ----------------------------------------------------
+        # UPDATE AVAILABLE
+        # ----------------------------------------------------
 
-        self.title.setText(
-            f"🚀 Доступна версия {version}"
+        version = self.info_data.get(
+            "version",
+            "?"
+        )
+
+        release_name = self.info_data.get(
+            "name",
+            ""
         )
 
         self.info.setText(
-            f"Текущая версия: "
-            f"{self.current_version}<br>"
-            f"Новая версия: "
-            f"<b>{version}</b>"
+            f"🚀 Доступна новая версия!\n\n"
+            f"Текущая: "
+            f"<b>{self.current_version}</b>\n"
+            f"Новая: "
+            f"<b>{version}</b>\n\n"
+            f"{release_name}"
         )
 
-        self.notes.setText(
+        self.notes.setPlainText(
             self.info_data.get(
                 "notes",
                 ""
             )
         )
 
-        self.update_btn.setEnabled(
+        self.update_button.setEnabled(
             True
         )
 
+    # ========================================================
+    # DOWNLOAD
+    # ========================================================
+
     def download(self):
 
-        self.update_btn.setEnabled(
+        if not self.info_data:
+
+            return
+
+        self.update_button.setEnabled(
             False
         )
 
-        self.close_btn.setEnabled(
+        self.rollback_button.setEnabled(
             False
         )
 
-        self.title.setText(
+        self.github_button.setEnabled(
+            False
+        )
+
+        self.info.setText(
             "⬇ Скачивание обновления..."
         )
 
-        self.update_thread = UpdateThread(
+        self.progress.setValue(
+            0
+        )
+
+        self.thread = DownloadThread(
             self.info_data
         )
 
-        self.update_thread.progress.connect(
+        self.thread.progress.connect(
             self.progress.setValue
         )
 
-        self.update_thread.finished.connect(
+        self.thread.finished.connect(
             self.download_finished
         )
 
-        self.update_thread.error.connect(
+        self.thread.error.connect(
             self.download_error
         )
 
-        self.update_thread.start()
+        self.thread.start()
+
+    # ========================================================
+    # DOWNLOAD FINISHED
+    # ========================================================
 
     def download_finished(
         self,
         path
     ):
 
-        self.updated_file = path
+        self.downloaded = Path(
+            path
+        )
 
         self.progress.setValue(
             100
         )
 
-        self.title.setText(
-            "✅ Обновление скачано"
+        new_version = self.info_data.get(
+            "version",
+            ""
         )
 
-        self.info.setText(
-            str(path)
+        try:
+
+            backup = start_update(
+                self.downloaded,
+                new_version
+            )
+
+        except Exception as e:
+
+            QMessageBox.critical(
+                self,
+                "Обновление",
+                f"❌ Не удалось начать обновление:\n\n{e}"
+            )
+
+            self.update_button.setEnabled(
+                True
+            )
+
+            self.rollback_button.setEnabled(
+                True
+            )
+
+            self.github_button.setEnabled(
+                True
+            )
+
+            return
+
+        QMessageBox.information(
+            self,
+            "Обновление",
+            f"✅ Версия {new_version} подготовлена.\n\n"
+            f"EZ Scan сейчас будет перезапущен.\n\n"
+            f"Резервная копия:\n{backup}"
         )
 
-        self.close_btn.setText(
-            "🚀 Перезапустить"
-        )
+        self.accept()
 
-        self.close_btn.setEnabled(
-            True
-        )
-
-        self.close_btn.clicked.disconnect()
-
-        self.close_btn.clicked.connect(
-            self.restart
-        )
+    # ========================================================
+    # DOWNLOAD ERROR
+    # ========================================================
 
     def download_error(
         self,
@@ -314,70 +527,52 @@ class UpdateWindow(QDialog):
             message
         )
 
-        self.close_btn.setEnabled(
+        self.update_button.setEnabled(
             True
         )
 
-        self.update_btn.setEnabled(
+        self.rollback_button.setEnabled(
             True
         )
 
-    def restart(self):
+        self.github_button.setEnabled(
+            True
+        )
 
-        if not self.updated_file:
+    # ========================================================
+    # ROLLBACK
+    # ========================================================
+
+    def rollback(self):
+
+        answer = QMessageBox.question(
+            self,
+            "Откат",
+            "Вернуть предыдущую версию EZ Scan?"
+        )
+
+        if answer != QMessageBox.Yes:
 
             return
 
-        import os
-        import subprocess
+        try:
 
-        updater = (
-            self.updated_file
-            .with_name(
-                "update_and_restart.sh"
-            )
-        )
+            start_rollback()
 
-        updater.write_text(
-            f"""#!/bin/bash
-sleep 1
-mv -f "{self.updated_file}" "$APPIMAGE"
-chmod +x "$APPIMAGE"
-exec "$APPIMAGE"
-""",
-            encoding="utf-8"
-        )
+        except Exception as e:
 
-        os.chmod(
-            updater,
-            0o755
-        )
-
-        appimage = os.environ.get(
-            "APPIMAGE"
-        )
-
-        if not appimage:
-
-            QMessageBox.warning(
+            QMessageBox.critical(
                 self,
-                "Обновление",
-                "Текущая программа не запущена "
-                "как AppImage."
+                "Откат",
+                f"❌ Ошибка отката:\n\n{e}"
             )
 
             return
 
-        subprocess.Popen(
-            [
-                "bash",
-                str(updater)
-            ],
-            env={
-                **os.environ,
-                "APPIMAGE": appimage
-            },
-            start_new_session=True
+        QMessageBox.information(
+            self,
+            "Откат",
+            "✅ Будет запущена предыдущая версия."
         )
 
         self.accept()

@@ -5,8 +5,32 @@ from PySide6.QtGui import QKeySequence
 from guide import GuideWindow
 from version import VERSION
 from update_window import UpdateWindow
+from app_menu_manager import AppMenuManager
+from recovery_window import RecoveryWindow
+from scanner_window import ScannerWindow
 class Settings(QDialog):
+    def open_recovery(self):
 
+        dialog = RecoveryWindow(
+            self
+        )
+
+        dialog.exec()
+        
+    def open_scanner_manager(self):
+
+        dialog = ScannerWindow(
+            self
+        )
+
+        dialog.exec()
+    def open_menu_manager(self):
+
+        dialog = AppMenuManager(
+            self
+        )
+
+        dialog.exec()
     def __init__(self):
 
         super().__init__()
@@ -247,6 +271,40 @@ class Settings(QDialog):
             update_btn
         )
         
+        menu_btn = QPushButton(
+            "🖥️ Меню Ubuntu"
+        )
+
+        menu_btn.clicked.connect(
+            self.open_menu_manager
+        )
+
+        layout.addRow(
+            menu_btn
+        )
+        scanner_btn = QPushButton(
+            "📷 Выбор QR-сканера"
+        )
+
+        scanner_btn.clicked.connect(
+            self.open_scanner_manager
+        )
+
+        layout.addRow(
+            scanner_btn
+        )
+        recovery_btn = QPushButton(
+            "🛠 Режим восстановления"
+        )
+
+        recovery_btn.clicked.connect(
+            self.open_recovery
+        )
+
+        layout.addRow(
+            recovery_btn
+        )
+
         w.setLayout(
             layout
         )

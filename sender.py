@@ -37,10 +37,167 @@ def get_active_profile():
 
 
 # ============================================================
+# ТЕКУЩЕЕ РАЗРЕШЕНИЕ ЭКРАНА
+# ============================================================
+
+def get_current_screen_size():
+
+    try:
+
+        data = subprocess.check_output(
+            [
+                "xdotool",
+                "getdisplaygeometry"
+            ],
+            text=True
+        ).strip()
+
+        width, height = map(
+            int,
+            data.split()
+        )
+
+        return (
+            width,
+            height
+        )
+
+    except Exception as e:
+
+        print(
+            "⚠ Не удалось определить разрешение экрана:",
+            e
+        )
+
+        return (
+            None,
+            None
+        )
+
+
+# ============================================================
+# МАСШТАБИРОВАНИЕ КООРДИНАТ
+# ============================================================
+
+def scale_position(position):
+
+    x = position.get(
+        "x",
+        0
+    )
+
+    y = position.get(
+        "y",
+        0
+    )
+
+    saved_width = position.get(
+        "screen_width"
+    )
+
+    saved_height = position.get(
+        "screen_height"
+    )
+
+    # --------------------------------------------------------
+    # Старый профиль
+    # --------------------------------------------------------
+
+    if not saved_width or not saved_height:
+
+        print(
+            "ℹ Координаты без информации о разрешении."
+        )
+
+        return (
+            x,
+            y
+        )
+
+    # --------------------------------------------------------
+    # Текущий экран
+    # --------------------------------------------------------
+
+    current_width, current_height = (
+        get_current_screen_size()
+    )
+
+    if not current_width or not current_height:
+
+        return (
+            x,
+            y
+        )
+
+    # --------------------------------------------------------
+    # Разрешение не изменилось
+    # --------------------------------------------------------
+
+    if (
+        current_width == saved_width
+        and
+        current_height == saved_height
+    ):
+
+        return (
+            x,
+            y
+        )
+
+    # --------------------------------------------------------
+    # Масштабирование
+    # --------------------------------------------------------
+
+    scaled_x = round(
+        x
+        * current_width
+        / saved_width
+    )
+
+    scaled_y = round(
+        y
+        * current_height
+        / saved_height
+    )
+
+    print(
+        "📐 Масштабирование координат:"
+    )
+
+    print(
+        f"   Было: "
+        f"({x}, {y})"
+    )
+
+    print(
+        f"   Экран обучения: "
+        f"{saved_width}x{saved_height}"
+    )
+
+    print(
+        f"   Текущий экран: "
+        f"{current_width}x{current_height}"
+    )
+
+    print(
+        f"   Стало: "
+        f"({scaled_x}, {scaled_y})"
+    )
+
+    return (
+        scaled_x,
+        scaled_y
+    )
+
+
+# ============================================================
 # КЛИК ПО КООРДИНАТАМ
 # ============================================================
 
-def click_xy(x, y):
+def click_xy(
+    x,
+    y
+):
 
     subprocess.call(
         [
@@ -64,12 +221,19 @@ def click_xy(x, y):
 # КЛИК ПО ОБУЧЕННОМУ ДЕЙСТВИЮ
 # ============================================================
 
-def click_action(action, profile):
+def click_action(
+    action,
+    profile
+):
 
     positions = profile.get(
         "positions",
         {}
     )
+
+    # --------------------------------------------------------
+    # Есть ли действие
+    # --------------------------------------------------------
 
     if action not in positions:
 
@@ -80,19 +244,31 @@ def click_action(action, profile):
 
         return False
 
-    pos = positions[action]
+    position = positions[action]
 
-    x = pos.get(
+    # --------------------------------------------------------
+    # Исходные координаты
+    # --------------------------------------------------------
+
+    raw_x = position.get(
         "x",
         0
     )
 
-    y = pos.get(
+    raw_y = position.get(
         "y",
         0
     )
 
-    if x == 0 and y == 0:
+    # --------------------------------------------------------
+    # Координаты не обучены
+    # --------------------------------------------------------
+
+    if (
+        raw_x == 0
+        and
+        raw_y == 0
+    ):
 
         print(
             "❌ Не обучено:",
@@ -101,8 +277,17 @@ def click_action(action, profile):
 
         return False
 
+    # --------------------------------------------------------
+    # Масштабируем
+    # --------------------------------------------------------
+
+    x, y = scale_position(
+        position
+    )
+
     print(
-        f"🖱 Клик: {action} → ({x}, {y})"
+        f"🖱 Клик: "
+        f"{action} → ({x}, {y})"
     )
 
     click_xy(
@@ -117,7 +302,9 @@ def click_action(action, profile):
 # ВСТАВКА
 # ============================================================
 
-def paste_text(text):
+def paste_text(
+    text
+):
 
     pyperclip.copy(
         str(text)
@@ -156,13 +343,111 @@ def press_enter():
 # ОСТАНОВКА
 # ============================================================
 
-def is_running(thread):
+def is_running(
+    thread
+):
 
     if thread is None:
 
         return True
 
     return thread.running
+
+
+# ============================================================
+# ПРОВЕРКА WORKFLOW
+# ============================================================
+
+def validate_workflow(
+    profile
+):
+
+    workflow = profile.get(
+        "workflow",
+        {}
+    )
+
+    inputs = workflow.get(
+        "input_stage",
+        []
+    )
+
+    buttons = workflow.get(
+        "button_stage",
+        []
+    )
+
+    positions = profile.get(
+        "positions",
+        {}
+    )
+
+    # --------------------------------------------------------
+    # Минимум два input
+    # --------------------------------------------------------
+
+    if len(inputs) < 2:
+
+        return False, (
+            "Нужно минимум 2 input-поля."
+        )
+
+    # --------------------------------------------------------
+    # Проверяем input
+    # --------------------------------------------------------
+
+    for action in inputs:
+
+        position = positions.get(
+            action
+        )
+
+        if not position:
+
+            return False, (
+                f"Не обучено действие: {action}"
+            )
+
+        if (
+            position.get("x", 0) == 0
+            and
+            position.get("y", 0) == 0
+        ):
+
+            return False, (
+                f"Не обучено действие: {action}"
+            )
+
+    # --------------------------------------------------------
+    # Проверяем кнопки
+    # --------------------------------------------------------
+
+    for action in buttons:
+
+        position = positions.get(
+            action
+        )
+
+        if not position:
+
+            return False, (
+                f"Не обучена кнопка: {action}"
+            )
+
+        if (
+            position.get("x", 0) == 0
+            and
+            position.get("y", 0) == 0
+        ):
+
+            return False, (
+                f"Не обучена кнопка: {action}"
+            )
+
+    return (
+        True,
+        ""
+    )
 
 
 # ============================================================
@@ -176,12 +461,14 @@ def execute_batch(
 ):
 
     # ========================================================
-    # ЗАГРУЖАЕМ ИМЕННО АКТИВНЫЙ ПРОФИЛЬ
+    # АКТИВНЫЙ ПРОФИЛЬ
     # ========================================================
 
     profile = get_active_profile()
 
-    profile_name = load().get(
+    cfg = load()
+
+    profile_name = cfg.get(
         "active_profile",
         "По умолчанию"
     )
@@ -204,6 +491,35 @@ def execute_batch(
     print(
         "=" * 50
     )
+
+    # ========================================================
+    # ПРОВЕРКА WORKFLOW
+    # ========================================================
+
+    valid, error = validate_workflow(
+        profile
+    )
+
+    if not valid:
+
+        print(
+            "❌",
+            error
+        )
+
+        if thread:
+
+            try:
+
+                thread.error.emit(
+                    error
+                )
+
+            except Exception:
+
+                pass
+
+        return
 
     # ========================================================
     # НАСТРОЙКИ
@@ -273,31 +589,23 @@ def execute_batch(
     )
 
     # ========================================================
-    # ПРОВЕРКА INPUT
-    # ========================================================
-
-    if len(inputs) < 2:
-
-        print(
-            "❌ Нужно минимум 2 input-поля"
-        )
-
-        return
-
-    # ========================================================
     # ЭТАП 1
     # ЗАПОЛНЕНИЕ INPUT
     # ========================================================
 
     done = 0
 
-    for index, code in enumerate(codes):
+    for index, code in enumerate(
+        codes
+    ):
 
         # ----------------------------------------------------
-        # ПРОВЕРКА ОСТАНОВКИ
+        # STOP
         # ----------------------------------------------------
 
-        if not is_running(thread):
+        if not is_running(
+            thread
+        ):
 
             print(
                 "🟠 Отправка остановлена"
@@ -306,7 +614,7 @@ def execute_batch(
             return
 
         # ----------------------------------------------------
-        # ВЫБИРАЕМ INPUT
+        # INPUT
         # ----------------------------------------------------
 
         if index == 0:
@@ -333,7 +641,7 @@ def execute_batch(
         )
 
         # ----------------------------------------------------
-        # КЛИК
+        # CLICK INPUT
         # ----------------------------------------------------
 
         if not click_action(
@@ -377,7 +685,7 @@ def execute_batch(
             press_enter()
 
         # ----------------------------------------------------
-        # ПРОГРЕСС
+        # PROGRESS
         # ----------------------------------------------------
 
         done += 1
@@ -393,9 +701,18 @@ def execute_batch(
         )
 
     # ========================================================
-    # ЭТАП 2
-    # КНОПКИ
+    # ПЕРЕД КНОПКАМИ
     # ========================================================
+
+    if not is_running(
+        thread
+    ):
+
+        print(
+            "🟠 Остановка перед кнопками"
+        )
+
+        return
 
     print()
     print(
@@ -407,12 +724,14 @@ def execute_batch(
     )
 
     # ========================================================
-    # НАЖАТИЕ КНОПОК
+    # КНОПКИ
     # ========================================================
 
     for button in buttons:
 
-        if not is_running(thread):
+        if not is_running(
+            thread
+        ):
 
             print(
                 "🟠 Остановка перед кнопками"
@@ -442,7 +761,7 @@ def execute_batch(
         )
 
     # ========================================================
-    # ЗАВЕРШЕНИЕ ПАЧКИ
+    # ПОСЛЕ ПАЧКИ
     # ========================================================
 
     print(

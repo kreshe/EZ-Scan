@@ -87,7 +87,9 @@ DEFAULT_CONFIG = {
     "first_run": True,
     "show_welcome": True,
     "active_profile": "По умолчанию",
-    
+    "scanner": {
+        "selected_device": ""
+    },
     "hotkeys": {
 
         "send": "F1",

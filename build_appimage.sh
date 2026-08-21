@@ -2,8 +2,8 @@
 
 set -e
 
-APP_NAME="EZ SCAN"
-APP_VERSION="2.1"
+APP_NAME="EZ Scan"
+APP_VERSION="2.2"
 ARCH="x86_64"
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,7 +14,7 @@ VENV="$BUILD_DIR/venv"
 
 OUTPUT_DIR="$PROJECT_DIR/dist"
 
-APPIMAGE_NAME="${APP_NAME}-v${APP_VERSION}-${ARCH}.AppImage"
+APPIMAGE_NAME="${APP_NAME}V${APP_VERSION}.AppImage"
 
 
 echo
@@ -136,7 +136,6 @@ echo
 echo "[4/10] Проверка проекта..."
 
 REQUIRED_FILES=(
-
     "main.py"
     "bootstrap.py"
     "setup_window.py"
@@ -144,7 +143,6 @@ REQUIRED_FILES=(
     "buffer.py"
     "scanner.py"
     "sender.py"
-
     "trainer.py"
     "settings.py"
     "config.py"
@@ -160,6 +158,11 @@ REQUIRED_FILES=(
     "welcome.py"
     "guide.py"
 
+    "updater.py"
+    "update_window.py"
+    "recovery_window.py"
+    "app_menu_manager.py"
+    "scanner_window.py"
 )
 
 

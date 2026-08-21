@@ -1,10 +1,25 @@
-import glob
 import os
-import subprocess
+import glob
 import time
+import grp
+import subprocess
+import shutil
 
 from evdev import InputDevice, ecodes
 
+from config import load, save
+
+
+# ============================================================
+# НАСТРОЙКИ
+# ============================================================
+
+RECONNECT_INTERVAL = 2.0
+
+
+# ============================================================
+# KEY MAP
+# ============================================================
 
 KEY_MAP = {
 
@@ -51,9 +66,13 @@ KEY_MAP = {
     "KEY_DOT": ".",
     "KEY_COMMA": ",",
     "KEY_SLASH": "/",
-    "KEY_SEMICOLON": ";"
+    "KEY_SEMICOLON": ";",
 }
 
+
+# ============================================================
+# РАСКЛАДКА
+# ============================================================
 
 RU = """
 йцукенгшщзхъ
@@ -67,35 +86,40 @@ asdfghjkl;'
 zxcvbnm,.
 """
 
-
 RU_TO_EN = {}
 
-for r, e in zip(
+for ru, en in zip(
     RU.replace("\n", ""),
     EN.replace("\n", "")
 ):
 
-    RU_TO_EN[r] = e
-    RU_TO_EN[r.upper()] = e.upper()
+    RU_TO_EN[ru] = en
+    RU_TO_EN[ru.upper()] = en.upper()
 
 
 def fix_layout(text):
 
-    result = ""
+    result = []
 
     for char in text:
 
-        result += RU_TO_EN.get(
-            char,
-            char
+        result.append(
+            RU_TO_EN.get(
+                char,
+                char
+            )
         )
 
-    return result
+    return "".join(
+        result
+    )
 
 
 def normalize(text):
 
-    text = fix_layout(text)
+    text = fix_layout(
+        text
+    )
 
     text = text.upper()
 
@@ -107,193 +131,31 @@ def normalize(text):
 
 
 # ============================================================
-# УСТРОЙСТВА
+# USER / PERMISSIONS
 # ============================================================
 
-def get_input_devices():
+def get_current_user():
 
-    devices = []
-
-    for path in glob.glob(
-        "/dev/input/event*"
-    ):
-
-        try:
-
-            device = InputDevice(
-                path
-            )
-
-            devices.append(
-                {
-                    "path": path,
-                    "name": device.name or "",
-                    "phys": device.phys or "",
-                    "uniq": device.uniq or ""
-                }
-            )
-
-            device.close()
-
-        except PermissionError:
-
-            devices.append(
-                {
-                    "path": path,
-                    "name": "Нет доступа",
-                    "phys": "",
-                    "uniq": ""
-                }
-            )
-
-        except Exception:
-
-            continue
-
-    return devices
-
-
-def get_by_id_devices():
-
-    result = []
-
-    for path in glob.glob(
-        "/dev/input/by-id/*"
-    ):
-
-        if not os.path.islink(
-            path
-        ):
-
-            continue
-
-        try:
-
-            real_path = os.path.realpath(
-                path
-            )
-
-            if real_path.startswith(
-                "/dev/input/event"
-            ):
-
-                result.append(
-                    {
-                        "link": path,
-                        "path": real_path
-                    }
-                )
-
-        except Exception:
-
-            continue
-
-    return result
-
-
-# ============================================================
-# ПОИСК СКАНЕРОВ
-# ============================================================
-
-def find_scanners():
-
-    devices = get_input_devices()
-
-    by_id = get_by_id_devices()
-
-    by_id_map = {}
-
-    for item in by_id:
-
-        by_id_map[
-            item["path"]
-        ] = item["link"]
-
-    keywords = (
-        "scanner",
-        "barcode",
-        "qr",
-        "honeywell",
-        "zebra",
-        "symbol",
-        "datalogic"
+    return os.environ.get(
+        "USER",
+        ""
     )
 
-    result = []
 
-    for device in devices:
+def user_in_input_group():
 
-        name = (
-            device["name"]
-            or ""
-        ).lower()
+    try:
 
-        link = by_id_map.get(
-            device["path"]
+        group = grp.getgrnam(
+            "input"
         )
 
-        link_name = (
-            os.path.basename(link).lower()
-            if link
-            else ""
-        )
+        return group.gr_gid in os.getgroups()
 
-        score = 0
+    except Exception:
 
-        for word in keywords:
+        return False
 
-            if word in name:
-
-                score += 10
-
-            if word in link_name:
-
-                score += 10
-
-        if "event-kbd" in link_name:
-
-            score += 3
-
-        if score > 0:
-
-            result.append(
-                {
-                    **device,
-                    "link": link,
-                    "score": score
-                }
-            )
-
-    result.sort(
-        key=lambda x: x["score"],
-        reverse=True
-    )
-
-    return result
-
-
-# ============================================================
-# ЛУЧШИЙ СКАНЕР
-# ============================================================
-
-def find_scanner():
-
-    scanners = find_scanners()
-
-    if not scanners:
-
-        return None
-
-    return (
-        scanners[0].get("link")
-        or
-        scanners[0]["path"]
-    )
-
-
-# ============================================================
-# ДОСТУП
-# ============================================================
 
 def check_scanner_access():
 
@@ -301,12 +163,7 @@ def check_scanner_access():
 
     if not device_path:
 
-        return {
-            "found": False,
-            "access": False,
-            "device": None,
-            "message": "Сканер не найден"
-        }
+        return False
 
     try:
 
@@ -316,85 +173,39 @@ def check_scanner_access():
 
         device.close()
 
-        return {
-            "found": True,
-            "access": True,
-            "device": device_path,
-            "message": "Доступ разрешён"
-        }
+        return True
 
-    except PermissionError:
+    except (
+        PermissionError,
+        OSError
+    ):
 
-        return {
-            "found": True,
-            "access": False,
-            "device": device_path,
-            "message": "Нет доступа"
-        }
-
-    except Exception as e:
-
-        return {
-            "found": True,
-            "access": False,
-            "device": device_path,
-            "message": str(e)
-        }
-
-
-# ============================================================
-# INPUT GROUP
-# ============================================================
-
-def user_in_input_group():
-
-    try:
-
-        result = subprocess.run(
-            [
-                "id",
-                "-nG"
-            ],
-            capture_output=True,
-            text=True
-        )
-
-        return (
-            "input"
-            in
-            result.stdout.split()
-        )
+        return False
 
     except Exception:
 
         return False
 
 
-# ============================================================
-# ПРАВА
-# ============================================================
+def add_user_to_input_group():
 
-def setup_scanner_permissions():
+    user = get_current_user()
 
-    username = os.environ.get(
-        "USER"
-    )
+    if not user:
 
-    if not username:
+        return (
+            False,
+            "Не удалось определить пользователя."
+        )
 
-        return {
-            "success": False,
-            "restart_required": False,
-            "message": "Не удалось определить пользователя."
-        }
+    if not shutil.which(
+        "pkexec"
+    ):
 
-    if user_in_input_group():
-
-        return {
-            "success": True,
-            "restart_required": False,
-            "message": "Доступ к input уже настроен."
-        }
+        return (
+            False,
+            "pkexec не найден."
+        )
 
     try:
 
@@ -404,126 +215,466 @@ def setup_scanner_permissions():
                 "usermod",
                 "-aG",
                 "input",
-                username
-            ]
+                user
+            ],
+            capture_output=True,
+            text=True
         )
 
-        if result.returncode != 0:
+        if result.returncode == 0:
 
-            return {
-                "success": False,
-                "restart_required": False,
-                "message": "Не удалось добавить пользователя в input."
-            }
-
-        return {
-            "success": True,
-            "restart_required": True,
-            "message": (
+            return (
+                True,
                 "Пользователь добавлен в группу input."
             )
-        }
 
-    except FileNotFoundError:
-
-        return {
-            "success": False,
-            "restart_required": False,
-            "message": "pkexec не найден."
-        }
+        return (
+            False,
+            result.stderr.strip()
+            or
+            "Не удалось добавить пользователя "
+            "в группу input."
+        )
 
     except Exception as e:
 
-        return {
-            "success": False,
-            "restart_required": False,
-            "message": str(e)
+        return (
+            False,
+            str(e)
+        )
+
+
+def setup_scanner_permissions():
+
+    if user_in_input_group():
+
+        if check_scanner_access():
+
+            return (
+                True,
+                "✅ Доступ к сканеру уже настроен."
+            )
+
+        return (
+            False,
+            "⚠ Пользователь в группе input, "
+            "но устройство недоступно."
+        )
+
+    return add_user_to_input_group()
+
+
+# ============================================================
+# СПИСОК УСТРОЙСТВ
+# ============================================================
+
+def find_scanners():
+
+    return glob.glob(
+        "/dev/input/by-id/usb-*-event-kbd"
+    )
+
+
+def get_scanner_devices():
+
+    devices = []
+
+    for path in find_scanners():
+
+        try:
+
+            device = InputDevice(
+                path
+            )
+
+            info = {
+                "path": path,
+                "name": device.name,
+                "vendor": getattr(
+                    device.info,
+                    "vendor",
+                    0
+                ),
+                "product": getattr(
+                    device.info,
+                    "product",
+                    0
+                ),
+                "accessible": True
+            }
+
+            device.close()
+
+        except PermissionError:
+
+            info = {
+                "path": path,
+                "name": "Нет доступа",
+                "vendor": 0,
+                "product": 0,
+                "accessible": False
+            }
+
+        except Exception as e:
+
+            info = {
+                "path": path,
+                "name": str(e),
+                "vendor": 0,
+                "product": 0,
+                "accessible": False
+            }
+
+        devices.append(
+            info
+        )
+
+    return devices
+
+
+# ============================================================
+# СОХРАНЁННЫЙ СКАНЕР
+# ============================================================
+
+def get_selected_scanner():
+
+    cfg = load()
+
+    return cfg.get(
+        "scanner",
+        {}
+    ).get(
+        "selected_device",
+        ""
+    )
+
+
+def set_selected_scanner(
+    device_path
+):
+
+    cfg = load()
+
+    cfg.setdefault(
+        "scanner",
+        {}
+    )
+
+    cfg["scanner"][
+        "selected_device"
+    ] = device_path
+
+    save(
+        cfg
+    )
+
+
+# ============================================================
+# ПОИСК АКТИВНОГО СКАНЕРА
+# ============================================================
+
+def find_scanner():
+
+    selected = get_selected_scanner()
+
+    # --------------------------------------------------------
+    # Если пользователь выбрал конкретный сканер
+    # --------------------------------------------------------
+
+    if selected:
+
+        if os.path.exists(
+            selected
+        ):
+
+            return selected
+
+        # ВАЖНО:
+        # не выбираем случайную клавиатуру.
+        # Ждём именно выбранное устройство.
+
+        return None
+
+    # --------------------------------------------------------
+    # Старый режим — автоматический выбор
+    # --------------------------------------------------------
+
+    devices = find_scanners()
+
+    if not devices:
+
+        return None
+
+    scanner_devices = [
+        device
+        for device in devices
+        if "scanner" in device.lower()
+    ]
+
+    if scanner_devices:
+
+        return scanner_devices[0]
+
+    return devices[0]
+
+
+# ============================================================
+# ПРОВЕРКА СКАНЕРА
+# ============================================================
+
+def check_scanner():
+
+    return (
+        find_scanner()
+        is not None
+    )
+
+
+# ============================================================
+# ИНФОРМАЦИЯ
+# ============================================================
+
+def get_scanner_info():
+
+    path = find_scanner()
+
+    if not path:
+
+        return None
+
+    try:
+
+        device = InputDevice(
+            path
+        )
+
+        info = {
+            "path": path,
+            "name": device.name,
+            "phys": getattr(
+                device,
+                "phys",
+                ""
+            ),
+            "vendor": getattr(
+                device.info,
+                "vendor",
+                0
+            ),
+            "product": getattr(
+                device.info,
+                "product",
+                0
+            )
         }
+
+        device.close()
+
+        return info
+
+    except Exception:
+
+        return None
+
+
+# ============================================================
+# ОТКРЫТЬ СКАНЕР
+# ============================================================
+
+def open_scanner():
+
+    device_path = find_scanner()
+
+    if not device_path:
+
+        return None
+
+    try:
+
+        device = InputDevice(
+            device_path
+        )
+
+        print()
+        print(
+            "🟢 Сканер найден:"
+        )
+
+        print(
+            "Path:",
+            device_path
+        )
+
+        print(
+            "Device:",
+            device.name
+        )
+
+        return device
+
+    except PermissionError:
+
+        print(
+            "🔐 Нет доступа к сканеру."
+        )
+
+        return None
+
+    except Exception as e:
+
+        print(
+            "⚠ Ошибка открытия сканера:",
+            e
+        )
+
+        return None
 
 
 # ============================================================
 # ЧТЕНИЕ
 # ============================================================
 
-def read_scanner(callback):
+def read_scanner(
+    callback,
+    status_callback=None,
+    reconnect_interval=RECONNECT_INTERVAL
+):
 
-    device_path = find_scanner()
+    while True:
 
-    if not device_path:
+        device = None
 
-        raise RuntimeError(
-            "QR-сканер не найден."
-        )
+        # ====================================================
+        # ЖДЁМ СКАНЕР
+        # ====================================================
 
-    try:
+        while device is None:
 
-        dev = InputDevice(
-            device_path
-        )
+            device = open_scanner()
 
-    except PermissionError:
+            if device is not None:
 
-        raise PermissionError(
-            "Нет доступа к QR-сканеру."
-        )
+                if status_callback:
 
-    print(
-        "Scanner:",
-        dev.name
-    )
-
-    print(
-        "Device:",
-        device_path
-    )
-
-    print(
-        "Ожидание QR..."
-    )
-
-    buffer = ""
-
-    try:
-
-        for event in dev.read_loop():
-
-            if event.type != ecodes.EV_KEY:
-                continue
-
-            if event.value != 1:
-                continue
-
-            key = ecodes.KEY.get(
-                event.code
-            )
-
-            if key == "KEY_ENTER":
-
-                if buffer:
-
-                    code = normalize(
-                        buffer
+                    status_callback(
+                        "connected"
                     )
 
-                    print(
-                        "SCAN:",
-                        code
-                    )
+                break
 
-                    callback(
-                        code
-                    )
+            if status_callback:
 
-                    buffer = ""
-
-            elif key in KEY_MAP:
-
-                buffer += KEY_MAP[key]
+                status_callback(
+                    "disconnected"
+                )
 
             time.sleep(
-                0.001
+                reconnect_interval
             )
 
-    finally:
+        # ====================================================
+        # ЧТЕНИЕ
+        # ====================================================
 
-        dev.close()
+        buffer = ""
+
+        try:
+
+            for event in device.read_loop():
+
+                if event.type != ecodes.EV_KEY:
+
+                    continue
+
+                if event.value != 1:
+
+                    continue
+
+                try:
+
+                    key = ecodes.KEY[
+                        event.code
+                    ]
+
+                except Exception:
+
+                    continue
+
+                if key == "KEY_ENTER":
+
+                    if buffer:
+
+                        code = normalize(
+                            buffer
+                        )
+
+                        print(
+                            "SCAN:",
+                            code
+                        )
+
+                        callback(
+                            code
+                        )
+
+                        buffer = ""
+
+                    continue
+
+                if key in KEY_MAP:
+
+                    buffer += KEY_MAP[
+                        key
+                    ]
+
+                time.sleep(
+                    0.001
+                )
+
+        except (
+            OSError,
+            IOError,
+            EOFError
+        ):
+
+            print(
+                "🔴 Сканер отключён."
+            )
+
+            if status_callback:
+
+                status_callback(
+                    "disconnected"
+                )
+
+        except Exception as e:
+
+            print(
+                "⚠ Ошибка сканера:",
+                e
+            )
+
+            if status_callback:
+
+                status_callback(
+                    (
+                        "error",
+                        str(e)
+                    )
+                )
+
+        finally:
+
+            if device:
+
+                try:
+
+                    device.close()
+
+                except Exception:
+
+                    pass
+
+        time.sleep(
+            reconnect_interval
+        )
