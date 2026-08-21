@@ -386,9 +386,9 @@ class UpdateWindow(QDialog):
         self.info.setText(
             f"🚀 Доступна новая версия!\n\n"
             f"Текущая: "
-            f"<b>{self.current_version}</b>\n"
+            f"{self.current_version}\n"
             f"Новая: "
-            f"<b>{version}</b>\n\n"
+            f"{version}\n\n"
             f"{release_name}"
         )
 
